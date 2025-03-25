@@ -1,0 +1,6 @@
+checkpoints/kmeans_checkpoint.pkl
+checkpoints/processed_files.txt
+checkpoints.bk/kmeans_checkpoint.pkl
+checkpoints.bk/processed_files.txt
+distances.bin
+distances.bin.cp

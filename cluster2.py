@@ -286,15 +286,16 @@ def plot_centroids_heatmap(centroids, save_to="heatmap_centroids.jpg"):
     plt.xlabel('Byte position in block')
     plt.title('Byte Stability Across All Centroids')
     plt.savefig(save_to, dpi=500)
+
 plot_centroids_heatmap(centroids)
 
-def find_fixed_centroids(centroids):
+def find_fixed_centroids(centroids, block_size=32):
     # Bytes that are identical in >95% of centroids
     fixed_positions = []
     for pos in range(block_size):
         unique_vals = len(np.unique(centroids[:, pos]))
         if unique_vals <= 1:  # Fully fixed
             fixed_positions.append(pos)
-
     print(f"Fixed bytes at positions: {fixed_positions}")
+
 find_fixed_centroids(centroids)

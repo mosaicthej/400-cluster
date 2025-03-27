@@ -6,3 +6,4 @@ distances.bin
 distances.bin.cp
 checkpoints/kmeans_checkpoint.pkl.cp
 env
+labels.bin

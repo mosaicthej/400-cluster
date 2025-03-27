@@ -76,7 +76,8 @@ def incremental_clustering(
     vector_gen = vector_generator(file_paths, block_size)
     processed_count = 0
     
-    while True:
+    # while True:
+    while processed_count < 100_000_000: # while it's less than 100k
         batch = []
         try:
             # Collect one batch
@@ -111,43 +112,40 @@ def save_distances(vector_gen, kmeans, output_file="distances.bin"):
             # Save as binary (4-byte float)
             f.write(np.array(distance, dtype=np.float32).tobytes())
 '''
-def save_distances(vector_gen, kmeans, output_file="distances.bin", buffer_size=10000):
-    """Calculate and save distances with resume support and batching."""
+def save_distances(vector_gen, kmeans, output_file="distances.bin", labels_file="labels.bin", buffer_size=10000):
+    """Save distances AND cluster labels for all blocks."""
     centroids = kmeans.cluster_centers_.astype(np.uint8)
-    centroids = centroids.reshape(kmeans.n_clusters, -1)  # Ensure 2D shape
+    centroids = centroids.reshape(kmeans.n_clusters, -1)
     
-    # Resume awareness: Check existing file size
-    if os.path.exists(output_file):
-        existing_bytes = os.path.getsize(output_file)
-        skip_count = existing_bytes // 4  # 4 bytes per float32
-        print(f"Resuming from {skip_count} existing distances")
-    else:
-        skip_count = 0
-        
-    # Initialize buffer and progress tracking
-    buffer = np.zeros(buffer_size, dtype=np.float32)
+    # Resume awareness for distances and labels
+    skip_dist = os.path.getsize(output_file) // 4 if os.path.exists(output_file) else 0
+    skip_labels = os.path.getsize(labels_file) // 4 if os.path.exists(labels_file) else 0
+    skip_count = max(skip_dist, skip_labels)
+    
+    # Initialize buffers
+    dist_buffer = np.zeros(buffer_size, dtype=np.float32)
+    label_buffer = np.zeros(buffer_size, dtype=np.int32)
     buffer_idx = 0
     total_processed = 0
     
-    with open(output_file, 'ab' if skip_count > 0 else 'wb') as f:  # Append if resuming
-        progress = tqdm(total=skip_count, desc="Processing blocks", unit="blocks")
+    with open(output_file, 'ab' if skip_count > 0 else 'wb') as f_dist, \
+         open(labels_file, 'ab' if skip_count > 0 else 'wb') as f_labels:
         
+        progress = tqdm(total=skip_count, desc="Processing blocks", unit="blocks")
         try:
             while True:
                 # Read a batch of vectors
                 batch = []
-                while len(batch) < 1024:  # Batch size for prediction
+                while len(batch) < 1024:
                     try:
                         batch.append(next(vector_gen))
                     except StopIteration:
                         break
-                
                 if not batch:
-                    break  # No more data
-                    
+                    break
                 batch = np.array(batch)
                 
-                # Skip already processed items
+                # Skip already processed
                 if total_processed < skip_count:
                     to_skip = min(len(batch), skip_count - total_processed)
                     batch = batch[to_skip:]
@@ -160,14 +158,16 @@ def save_distances(vector_gen, kmeans, output_file="distances.bin", buffer_size=
                 labels = kmeans.predict(batch)
                 distances = np.sum(np.abs(batch - centroids[labels]), axis=1)
                 
-                # Fill buffer
-                for d in distances:
-                    buffer[buffer_idx] = d
+                # Fill buffers
+                for d, l in zip(distances, labels):
+                    dist_buffer[buffer_idx] = d
+                    label_buffer[buffer_idx] = l
                     buffer_idx += 1
                     
                     # Write when buffer is full
                     if buffer_idx == buffer_size:
-                        f.write(buffer.tobytes())
+                        f_dist.write(dist_buffer.tobytes())
+                        f_labels.write(label_buffer.tobytes())
                         progress.update(buffer_size)
                         buffer_idx = 0
                 
@@ -175,11 +175,13 @@ def save_distances(vector_gen, kmeans, output_file="distances.bin", buffer_size=
                 progress.update(len(batch))
                 
         finally:
-            # Write remaining buffer
+            # Write remaining buffers
             if buffer_idx > 0:
-                f.write(buffer[:buffer_idx].tobytes())
+                f_dist.write(dist_buffer[:buffer_idx].tobytes())
+                f_labels.write(label_buffer[:buffer_idx].tobytes())
                 progress.update(buffer_idx)
             progress.close()
+
 
 # part 4: file process first check checkpoints
 def get_unprocessed_files(all_files, checkpoint_dir="checkpoints"):
@@ -234,9 +236,30 @@ for i in range(0, len(unprocessed), chunk_size):
 
 
 # 4. presentation
+# Load all distances and labels
 distances = np.fromfile("distances.bin", dtype=np.float32)
-d_hist = sns.histplot(distances, bins=50)
+labels = np.fromfile("labels.bin", dtype=np.int32)
 
+# Compute average distance per cluster
+n_clusters = kmeans.n_clusters
+cluster_avg_distances = [
+    np.mean(distances[labels == i]) 
+    for i in range(n_clusters)
+]
+
+def plot_clust_size_avgdist(labels, minlength, 
+                            cluster_avg_distances, save_to="clust_avgdist.jpg"):
+    # Plot cluster size vs. average distance
+    cluster_sizes = np.bincount(labels, minlength=n_clusters)
+    plt.scatter(cluster_sizes, cluster_avg_distances, alpha=0.5)
+    plt.xlabel("Cluster Size")
+    plt.ylabel("Average Distance")
+    plt.title("cluster size vs average distance")
+    plt.savefig(save_to, dpi=500)
+
+plot_clust_size_avgdist(labels, n_clusters, cluster_avg_distances)
+
+d_hist = sns.histplot(distances, bins=50)
 kmeans = joblib.load("checkpoints/kmeans_checkpoint.pkl")
 centroids = kmeans.cluster_centers_.astype(np.uint8)
 
@@ -244,29 +267,34 @@ print("the centroids looks like this, which is averaged out template....")
 print_centroid(centroids[0])
 
 # plot the centroids (comparative over different set s
-def plot_centroids_comp(centroidss, labels):
+def plot_centroids_comp(centroidss, labels, save_to="centroids.jpg"):
     plt.figure(figsize=(8,4))
     for i, cs in enumerate(centroidss):
         sns.kdeplot([c[0] for c in cs], label=labels[i])
     plt.xlabel('Byte value at position 0')
     plt.title('Comparative byte distributions')
     plt.legend()
+    plt.savefig(save_to, dpi=500)
 
-def plot_centroids_heatmap(centroids):
+plot_centroids_comp((centroids,), ("centroids general",))
+
+def plot_centroids_heatmap(centroids, save_to="heatmap_centroids.jpg"):
     # Compute byte-wise variability across all centroids
     variability = np.std(centroids, axis=0)
     plt.figure(figsize=(12, 4))
     sns.heatmap(variability.reshape(1, -1), cmap='viridis', annot=False, cbar=True)
     plt.xlabel('Byte position in block')
     plt.title('Byte Stability Across All Centroids')
+    plt.savefig(save_to, dpi=500)
+plot_centroids_heatmap(centroids)
 
-def plot_cen
-# Get cluster sizes and average distances
-cluster_sizes = np.bincount(kmeans.labels_)
-cluster_avg_distances = [np.mean(distances[kmeans.labels_ == i]) for i in range(n_clusters)]
-plt.scatter(cluster_sizes, cluster_avg_distances, alpha=0.6)
-plt.xlabel('Cluster Size')
-plt.ylabel('Average Distance')
-plt.title('Cluster Size vs. Avg. Distance to Centroid')
+def find_fixed_centroids(centroids):
+    # Bytes that are identical in >95% of centroids
+    fixed_positions = []
+    for pos in range(block_size):
+        unique_vals = len(np.unique(centroids[:, pos]))
+        if unique_vals <= 1:  # Fully fixed
+            fixed_positions.append(pos)
 
-
+    print(f"Fixed bytes at positions: {fixed_positions}")
+find_fixed_centroids(centroids)

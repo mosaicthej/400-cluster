@@ -198,6 +198,13 @@ def update_processed_files(processed_files, checkpoint_dir="checkpoints"):
         f.write('\n'.join([str(file) for file in processed_files]) + '\n')
 
 
+# print centroid in hex format
+def print_centroid(centroid, block_size=32):
+    hex_str = ' '.join(f'{b:02x}' for b in centroid)
+    print(f"Centroid (hex): {hex_str}")
+
+
+
 # main workflow
 
 # 2. Resume or start fresh
@@ -224,4 +231,42 @@ for i in range(0, len(unprocessed), chunk_size):
     
     # 3c. Mark files as processed
     update_processed_files(chunk, checkpoint_dir)
+
+
+# 4. presentation
+distances = np.fromfile("distances.bin", dtype=np.float32)
+d_hist = sns.histplot(distances, bins=50)
+
+kmeans = joblib.load("checkpoints/kmeans_checkpoint.pkl")
+centroids = kmeans.cluster_centers_.astype(np.uint8)
+
+print("the centroids looks like this, which is averaged out template....")
+print_centroid(centroids[0])
+
+# plot the centroids (comparative over different set s
+def plot_centroids_comp(centroidss, labels):
+    plt.figure(figsize=(8,4))
+    for i, cs in enumerate(centroidss):
+        sns.kdeplot([c[0] for c in cs], label=labels[i])
+    plt.xlabel('Byte value at position 0')
+    plt.title('Comparative byte distributions')
+    plt.legend()
+
+def plot_centroids_heatmap(centroids):
+    # Compute byte-wise variability across all centroids
+    variability = np.std(centroids, axis=0)
+    plt.figure(figsize=(12, 4))
+    sns.heatmap(variability.reshape(1, -1), cmap='viridis', annot=False, cbar=True)
+    plt.xlabel('Byte position in block')
+    plt.title('Byte Stability Across All Centroids')
+
+def plot_cen
+# Get cluster sizes and average distances
+cluster_sizes = np.bincount(kmeans.labels_)
+cluster_avg_distances = [np.mean(distances[kmeans.labels_ == i]) for i in range(n_clusters)]
+plt.scatter(cluster_sizes, cluster_avg_distances, alpha=0.6)
+plt.xlabel('Cluster Size')
+plt.ylabel('Average Distance')
+plt.title('Cluster Size vs. Avg. Distance to Centroid')
+
 
